@@ -1,0 +1,176 @@
+\chapter{Introduction}
+
+Write a general introduction to static reflection.
+
+What are the design goals and constraints
+\begin{itemize}
+\item Efficient compile-time evaluation.
+\item Reflection values as template arguments.
+\item Reasonably simple reflection API.
+\item Absolutely zero impact memory footprint or runtime performance.
+\end{itemize}
+
+\section{Generative metaprograms}
+
+Static reflection allows algorithms that operate on the semantic structure of entities within in a translation unit. 
+A common use of these facilities is to generate a function definition based on the declarations within a class.
+One such use is to generate a static reflection to generically define equality comparison: 
+
+\begin{codeblock}
+struct S { 
+  int x, y, z;
+}; 
+ 
+int main() { 
+ S s1 { 1, 0, 0 };
+ S s2 { 0, 0, 1 };
+ assert(equal(s1, s1));
+ assert(!equal(s1, s2));
+}
+\end{codeblock}
+
+The definition of \tcode{equal} can be defined by two reflective algorithms. The first, is the ``driver'', which sets up a call to an equality computation.
+
+\begin{codeblock}
+template<typename T> 
+bool equal(const T& a, const T& b) {
+  constexpr meta::object type = reflexpr(T);
+  constexpr meta::object first = meta::first_member(type);
+  return compare<first>(a, b);
+}
+\end{codeblock}
+
+This calls a second function, \tcode{compare}, which will recursively compare the members of \tcode{a} and \tcode{b}. 
+The \tcode{reflexpr} operator yields a token describing the (eventual) class substituted for \tcode{T}. 
+The type of this value is \tcode{meta::info}. 
+The \tcode{front} function yields a reflection of the member of the class, whatever that may be.
+
+The \tcode{compare} function is somewhat more complex; it is shown below. 
+
+\begin{codeblock}
+template<meta::object X, typename T> 
+bool compare(const T& a, const T& b) { 
+  if constexpr (!meta::is_null(X)) { 
+    if constexpr (meta::is_data_member(X)) { 
+      auto p = valueof(X); 
+      if (a.*p != b.*p) 
+        return false; 
+    }
+    return compare<next(X)>(a, b); 
+  } 
+  return true; 
+}
+\end{codeblock}
+
+Note that the algorithm is not \tcode{constexpr}; we require the function to have runtime behavior. 
+Also, the compile-time values of the reflection are passed via template arguments. 
+This is essential because the (syntactic) definition of this function depends on the meta-values passed into the function. 
+
+We use \tcode{constexpr} if to selectively instantiate branches of the function: whenever the reflection X is non-null (i.e., does not correspond to an entity), we can continue recursing through the list. 
+Otherwise, we have reached the end of the list of members, so the objects must be equal. 
+
+If X is non-null and also a reflection of a data member, then we can compare the corresponding values of that data member in the objects a and b. 
+The \tcode{valueof} operator yields a pointer-to-member value for the reflected data member. 
+This can be used to extract and compare the actual values in \tcode{a} and \tcode{b}. 
+
+In the implementation above, the reflection value must be passed as a template argument due to the use of the \tcode{valueof} operator in the definition.
+This operator takes a constant expression operand (a reflection) and yields a value whose type is determined by the entity reflected.
+Here, in each recursion through the function, \tcode{valueof(X)} will yield a pointer to a differently typed data member.  
+
+An implementation using concepts, here presented using concepts, is more clearly specified, although a bit less compact. 
+
+\begin{codeblock}
+// Base case 
+template<meta::info X, typename T> 
+  requires meta::is_null(X)
+bool compare(const T& a, const T& b) { 
+  return true; 
+} 
+ 
+// Compares data members 
+template<meta::info X, typename T> 
+  requires meta::is_data_member(X)
+bool compare(const T& a, const T& b) { 
+  auto p = valueof(X); 
+  if (a.*p != b.*p) 
+    return false; 
+  return compare<next(X)>(a, b); 
+} 
+ 
+// Skips non-data members 
+template<meta::info X, typename T>
+bool compare(const T& a, const T& b) { 
+  return compare<next(X)>(a, b); 
+} 
+\end{codeblock}
+
+Note that the algorithm cannot be written iteratively: 
+
+\begin{codeblock}
+for (auto m : meta::members(reflexpr(T))) { 
+  if (meta::is_data_member(m)) 
+    auto ptr = valueof(m); // error: m is not a constant expression 
+}
+\end{codeblock}
+
+We further note that the earlier proposed expansion-based for loop\footnote{See P0589R90.} will also fail to satisfy the requirement because the loop variable cannot be declared \tcode{constexpr} (although that may be addressed in a future version). 
+
+This algorithm is \emph{generative}. 
+That is, the composition of the algorithm, not just its computation, depends on the values of reflected entities. 
+In such cases, meta objects must be passed as template arguments. 
+This distinction between normal and generative programming can make value-based reflection difficult to use; it requires implementers to understand when and how to context switch between the different processes of translation and evaluation \footnote{See P0992R0}.
+
+
+\subsection{A non-generative metaprogram}
+
+Not all reflective algorithms are generative (although we suspect that most useful algorithms are). Here is a simple example that counts (inaccurately) the number of entities nested within another. 
+
+\begin{codeblock}
+constexpr int count(meta::object x) { 
+  int n = 0; 
+  for (auto k : x) { 
+    // See through templates... 
+    if (meta::is_template(k)) 
+      k = meta::templated_declaration(k); 
+
+    // Count recursively 
+    if (meta::has_members(k)) 
+      n += count(k); 
+  } 
+  return 1 + n; 
+}
+\end{codeblock}
+
+and it’s accompanying use: 
+
+\begin{codeblock}
+constexpr int n = count(reflexpr(std)); 
+std::cout << n << '\n'; 
+\end{codeblock}
+
+The variable \tcode{n} must be \tcode{constexpr} in order to force compile-time evaluation of the count function. 
+
+In order to eliminate the additional declaration, we introduce a new feature: immediate functions. An immediate function is one whose result is required to be computed at its call site. This is an extended form of constexpr, which requires a function to be evaluated at its call site: We could, for example, modify the definition of count like so: 
+
+\begin{codeblock}
+constexpr! int count(meta::object x) { 
+  // Same as above 
+}
+\end{codeblock}
+
+The \tcode{constexpr!} specifier marks the function as an immediate function. That lets us use the function more simply: 
+
+\begin{codeblock}
+std::cout << count(reflexpr(std)) << '\n'; 
+\end{codeblock}
+
+Note that, within the definition of count, the meta:: functions must also be immediate functions. We discuss issues around immediate functions in much more detail in Section XXX. 
+
+\section{Interaction with other language features}
+
+What features does reflection interact with?
+\begin{enumerate}
+\item What's the difference between concepts and reflections?
+\item Can you reflect non-exported entities of a module? Failure to allow this will seriously limit the ability to generate algorithms outside of your own module.
+\item Others?
+\end{enumerate}

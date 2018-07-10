@@ -1,0 +1,26 @@
+%!TEX root = ts.tex
+%%--------------------------------------------------
+%% Title page for C++ Technical Specification
+
+
+\thispagestyle{empty}
+\begingroup
+\def\hd{
+  \begin{tabular}{ll}
+  \textbf{Document Number:} & {\larger\docno}             \\
+  \textbf{Date:}            & \reldate                    \\
+  % \textbf{Revises:}         & \prevdocno                  \\
+  \textbf{Reply to:}        
+    & Andrew Sutton (\href{mailto:asutton@uakron.edu}{asutton@uakron.edu}) \\
+    & Daveed Vandevoorde (\href{mailto:daveed@edg.com}{daveed@edg.com}) \\
+    & Herb Sutter (\href{mailto:hsutton@microsoft.com}{hsutton@microsoft.com}) \\
+  \end{tabular}\\
+}
+\newlength{\hdwidth}
+\settowidth{\hdwidth}{\hd}
+\hfill\begin{minipage}{\hdwidth}\hd\end{minipage}
+\endgroup
+
+\begin{center}
+\textbf{\Huge \doctitle}
+\end{center}
